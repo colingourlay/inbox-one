@@ -11,73 +11,61 @@ var AUTH_TOKEN_REGEX = /authenticity_token" value="(\w+)"/;
         console.log('Inbox Zero Alert!: "' + tweet.text + '"');
         sendPasswordResetEmail(tweet.user.screen_name);
     });
-    stream.on('error', function (err) {
-        throw err;
+    stream.on('error', function (error) {
+        throw error;
     });
 });
+
+function parseResponse(response, callback){
+    var token;
+    if (response.statusCode !== 200) {
+        callback(response.statusCode);
+    }
+
+    token = response.body.match(AUTH_TOKEN_REGEX);
+    if (!token || token.length < 2) {
+        return done('Too many attempts');
+    }
+
+    done(null, token[1]);
+}
+
+function log(message){
+    return function(){
+        console.log(message);
+    }
+}
 
 function sendPasswordResetEmail(username) {
     var jar = request.jar();
 
+    console.log('Starting reset process for @' + username);
+
     kgo
-    ('begin', function (done) {
-        console.log('Starting reset process for @' + username);
-        request.get(URL_ROOT + 'begin_password_reset', {
+    ({
+        passwordResetUrl: URL_ROOT + 'begin_password_reset',
+        resetConfig: {
             jar: jar
-        }, function (err, response, body) {
-            var token;
-            if (!err && response.statusCode == 200) {
-                token = response.body.match(AUTH_TOKEN_REGEX);
-                if (!token || token.length < 2) {
-                    return done('Too many attempts');
-                }
-                token = token[1];
-                return done(null, token);
-            }
-            done(err || response.statusCode);
-        });
+        },
+        sendResetUrl: URL_ROOT + 'send_password_reset',
     })
-    ('identify', ['begin'], function (token, done) {
-        console.log('Identifying email address for @' + username);
-        request.post(URL_ROOT + 'begin_password_reset', {
-            form: {
-                authenticity_token: token,
-                account_identifier: username
-            },
-            followAllRedirects: true,
-            jar: jar
-        }, function (err, response, body) {
-            var token;
-            if (!err && response.statusCode == 200) {
-                token = response.body.match(AUTH_TOKEN_REGEX);
-                if (!token || token.length < 2) {
-                    return done('Too many attempts');
-                }
-                token = token[1];
-                return done(null, token);
-            }
-            done(err || response.statusCode);
-        });
-    })
-    ('send', ['identify'], function (token, done) {
-        console.log('Sending email to @' + username);
-        request.post(URL_ROOT + 'send_password_reset', {
-            form: {
-                authenticity_token: token,
-                'method_hint[-1]': 'email',
-                'method': '-1'
-            },
-            followAllRedirects: true,
-            jar: jar
-        }, function (err, response, body) {
-            if (!err && response.statusCode == 200) {
+    (log('Starting reset process for @' + username))
+    ('beginResponse', 'beginBody', [passwordResetUrl, resetConfig], request.get)
+    ('beginToken', ['beginToken'], parseResponse)
+    (log('Identifying email address for @' + username))
+    ('identifyResponse', 'identifyBody', ['beginToken'], request.post)
+    ('identifyToken', ['beginToken'], parseResponse)
+    (log('Sending email to @' + username))
+    ('send', ['identifyToken'], function (token, done) {
+        request.post(URL_ROOT + 'send_password_reset', , function (error, response) {
+            if (!error && response.statusCode == 200) {
                 console.log('Sent email to @' + username);
                 return done(null);
             }
-            done(err || response.statusCode);
+            done(error || response.statusCode);
         });
     })
-    .on('error', function (err, stepName) {
-        console.log('Failed to send email to @' + username + '\n[error: "' + err + '"]');
+    .on('error', function (error, stepName) {
+        console.log('Failed to send email to @' + username + '\n[error: "' + error + '"]');
     });
 }
