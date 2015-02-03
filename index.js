@@ -5,11 +5,14 @@ var config = require('./config');
 
 var URL_ROOT = 'https://twitter.com/account/';
 var AUTH_TOKEN_REGEX = /authenticity_token" value="(\w+)"/;
+var SPACES_REGEX = /\s/g;
 
-(new Twitter(config)).stream('statuses/filter', {track: 'inboxzero'}, function (stream) {
+(new Twitter(config)).stream('statuses/filter', {track: 'inboxzero,inbox zero'}, function (stream) {
     stream.on('data', function (tweet) {
-        console.log('Inbox Zero Alert!: "' + tweet.text + '"');
-        sendPasswordResetEmail(tweet.user.screen_name);
+        if (tweet.text.replace(SPACES_REGEX, '').toLowerCase().indexOf('inboxzero') > -1) {
+            console.log('Inbox Zero Alert!: "' + tweet.text + '"');
+            sendPasswordResetEmail(tweet.user.screen_name);
+        }
     });
     stream.on('error', function (err) {
         throw err;
