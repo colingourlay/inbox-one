@@ -1,6 +1,7 @@
 var kgo = require('kgo');
 var request = require('request');
 var Twitter = require('twitter');
+var xtend = require('xtend');
 var config = require('./config');
 
 var URL_ROOT = 'https://twitter.com/account/';
@@ -19,13 +20,15 @@ var SPACES_REGEX = /\s/g;
     });
 });
 
-function parseResponse(response, callback){
+function parseResponse(response, done) {
     var token;
+
     if (response.statusCode !== 200) {
-        callback(response.statusCode);
+        return done(response.statusCode);
     }
 
     token = response.body.match(AUTH_TOKEN_REGEX);
+
     if (!token || token.length < 2) {
         return done('Too many attempts');
     }
@@ -33,42 +36,47 @@ function parseResponse(response, callback){
     done(null, token[1]);
 }
 
-function log(message){
-    return function(){
-        console.log(message);
-    }
-}
-
 function sendPasswordResetEmail(username) {
-    var jar = request.jar();
-
-    console.log('Starting reset process for @' + username);
+    var options = {
+        followAllRedirects: true,
+        jar: request.jar()
+    };
 
     kgo
-    ({
-        passwordResetUrl: URL_ROOT + 'begin_password_reset',
-        resetConfig: {
-            jar: jar
-        },
-        sendResetUrl: URL_ROOT + 'send_password_reset',
+    ('beginResponse', function (done) {
+        console.log('Starting reset process for @' + username);
+        request.get(URL_ROOT + 'begin_password_reset', options, done);
     })
-    (log('Starting reset process for @' + username))
-    ('beginResponse', 'beginBody', [passwordResetUrl, resetConfig], request.get)
-    ('beginToken', ['beginToken'], parseResponse)
-    (log('Identifying email address for @' + username))
-    ('identifyResponse', 'identifyBody', ['beginToken'], request.post)
-    ('identifyToken', ['beginToken'], parseResponse)
-    (log('Sending email to @' + username))
-    ('send', ['identifyToken'], function (token, done) {
-        request.post(URL_ROOT + 'send_password_reset', , function (error, response) {
-            if (!error && response.statusCode == 200) {
-                console.log('Sent email to @' + username);
-                return done(null);
+    ('beginToken', ['beginResponse'], parseResponse)
+    ('identifyResponse', ['beginToken'], function (beginToken, done) {
+        console.log('Identifying email address for @' + username);
+        request.post(URL_ROOT + 'begin_password_reset', xtend(options, {
+            form: {
+                authenticity_token: beginToken,
+                account_identifier: username
             }
-            done(error || response.statusCode);
-        });
+        }), done);
+    })
+    ('identifyToken', ['identifyResponse'], parseResponse)
+    ('sendResponse', ['identifyToken'], function (identifyToken, done) {
+        console.log('Sending email to @' + username);
+        request.post(URL_ROOT + 'send_password_reset', xtend(options, {
+            form: {
+                authenticity_token: identifyToken,
+                method: '-1',
+                'method_hint[-1]': 'email'
+            }
+        }), done);
+    })
+    ('confirmSent', ['sendResponse'], function (response, done) {
+        if (response.statusCode !== 200) {
+            return done(response.statusCode);
+        }
+
+        console.log('Sent email to @' + username);
+        done(null);
     })
     .on('error', function (error, stepName) {
-        console.log('Failed to send email to @' + username + '\n[error: "' + error + '"]');
+        console.log('Failed to send email to @' + username + '\n[error: "' + error + '", stepName: "' + stepName + '"]');
     });
 }
